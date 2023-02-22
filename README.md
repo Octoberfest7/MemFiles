@@ -260,7 +260,11 @@ One notable deviation from the base project is that the base project is designed
   
 To mitigate this, the ASM file in the ShellcodeTemplate project was edited to remove the ASM related to setting up the stack, calling the function, and then restoring the stack pointer after the function has finished execution. The result is that the hook placed in the NtAPI now jumps execution directly into the replacement NtFunction, with the stack and registers set up as they were when the original NtAPI was called by the program (with the exception of RAX which is used for our JMP).
 
-Original ShellcodeTemplate ASM: <img width="296" alt="image" src="https://user-images.githubusercontent.com/91164728/220423560-13df4b5b-f18f-4bb8-802d-b2d9c6dbebc3.png">MemFiles ASM: ![image](https://user-images.githubusercontent.com/91164728/220471631-798bcb2d-22af-45cf-b6bc-021e82ed1a0d.png)
+Original ShellcodeTemplate ASM:  
+<img width="296" alt="image" src="https://user-images.githubusercontent.com/91164728/220423560-13df4b5b-f18f-4bb8-802d-b2d9c6dbebc3.png">  
+
+MemFiles ASM:  
+![image](https://user-images.githubusercontent.com/91164728/220471631-798bcb2d-22af-45cf-b6bc-021e82ed1a0d.png)
 
 Each hooked NtAPI has their own PIC NtFunction that contains the requisite logic to either:
   
