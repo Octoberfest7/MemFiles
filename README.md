@@ -19,14 +19,14 @@ This includes:
 -.NET assemblies ran inline using something like [inline-executeAssembly](https://github.com/anthemtotheego/InlineExecute-Assembly)  
 -PE's ran inline using something like [Inline-Execute-PE](https://github.com/Octoberfest7/Inline-Execute-PE)  
 
-All of these are compatible because they run inside the Beacon process, where the relevant NtFunctions have been hooked.
+All of these are compatible because they run inside the Beacon process, where the relevant NtAPI's have been hooked.
 
 MemFiles does NOT work with things like:  
 -execute-assembly  
 -shell <program>  
 -run <program>  
 
-None of these are compatible because they all spawn other processes whose NtFunctions have NOT been hooked.
+None of these are compatible because they all spawn other processes whose NtAPI's have NOT been hooked.
 
 MemFiles has successfully been tested with tools like Rubeus, SharpHound, Procdump, and Powershell when they are ran within the Beacon process.  
 
