@@ -161,6 +161,8 @@ Query the status and configuration of MemFiles using memtable. During long opera
 ## Capabilities and Limitations
 As emphasized in the Introduction, MemFiles requires a clean copy of NTDLL in the Beacon process in order to function. This is necessary because it reads the original bytes in the NtFunction and copies certain ones to the trampoline, which is later used to complete normal calls to the NtFunction that MemFiles should not interfere with. This subject is gone into more detail in the "Technical Details, Design Considerations, and Commentary" section.
 
+MemFiles makes an initial allocation of 1048576 bytes for each file; as data is written to memory, it can and will expand this allocation as needed to hold larger files.
+
 The filename stored in the MemFiles struct is parsed out of an argument that is passed to the replacement NtCreateFile function.  MemFiles does this is a fairly simplistic fashion, by locating the "special" directory in the file path argument, seeking to the end of it, and then incrementing the pointer by 1 to account for the "\" character that separates the "special" directory and the filename.  For example, in the path 'C:\users\tom\redteam\myfile.txt', MemFiles locates 'redteam', accounts for the backslash character, and selects 'myfile.txt' as the filename.
 
 MemFiles doesn't care about any preceding directories in the file path; 'C:\redteam\myfile.txt' and 'c:\users\tom\appdata\local\redteam\myfile.txt' are equally valid paths as far as MemFiles is concerned. 
