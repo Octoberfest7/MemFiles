@@ -163,7 +163,7 @@ As emphasized in the Introduction, MemFiles requires a clean copy of NTDLL in th
 
 MemFiles makes an initial allocation of 1048576 bytes for each file; as data is written to memory, it can and will expand this allocation as needed to hold larger files.
 
-The filename stored in the MemFiles struct is parsed out of an argument that is passed to the replacement NtCreateFile function.  MemFiles does this is a fairly simplistic fashion, by locating the "special" directory in the file path argument, seeking to the end of it, and then incrementing the pointer by 1 to account for the "\" character that separates the "special" directory and the filename.  For example, in the path 'C:\users\tom\redteam\myfile.txt', MemFiles locates 'redteam', accounts for the backslash character, and selects 'myfile.txt' as the filename.
+The filename stored in the MemFiles struct is parsed out of an argument that is passed to the replacement NtCreateFile function.  MemFiles does this is a fairly simplistic fashion, by locating the "special" directory in the file path argument, seeking to the end of it, and then incrementing the pointer by 1 to account for the '\\' character that separates the "special" directory and the filename.  For example, in the path 'C:\users\tom\redteam\myfile.txt', MemFiles locates 'redteam', accounts for the backslash character, and selects 'myfile.txt' as the filename.
 
 MemFiles doesn't care about any preceding directories in the file path; 'C:\redteam\myfile.txt' and 'c:\users\tom\appdata\local\redteam\myfile.txt' are equally valid paths as far as MemFiles is concerned. 
 
