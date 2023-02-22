@@ -4,7 +4,7 @@
 #### I highly encourage you to read all of the documentation up until the "Technical Details, Design Considerations, and Commentary" section!
 
 ## Introduction
-MemFiles is a toolkit for CobaltStrike that enables Operators to write files produced by the Beacon process into memory, rather than writing them to disk on the target system. It has been successfully tested on Windows 7, 10, and 11; corresponding server version should work without issue. MemFiles is restricted to x64 Beacons.
+MemFiles is a toolkit for CobaltStrike that enables Operators to write files produced by the Beacon process into memory, rather than writing them to disk on the target system. It has been successfully tested on Windows 7, 10, and 11; corresponding server versions should work without issue. MemFiles is restricted to x64 Beacons.
 
 It accomplishes this by hooking several different NtAPI's within NTDLL.dll and redirecting calls to those API's to functions that have been injected into the Beacon process memory space.  
 
