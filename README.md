@@ -33,9 +33,9 @@ MemFiles has successfully been tested with tools like Rubeus, SharpHound, Procdu
 ![](MemFiles_Demo.gif)
 
 ## Setup
-Clone the repository and optionally alter the hookdir variable that is defined at line 64 in both /PIC/Source/NtCreateFile.c and /PIC/Source/NtOpenFile.c. This variable is the "special" directory that signals to MemFiles it should intercept the file being created. The hookdir variable is set to "redteam" by default. Ensure this variable is not a real directory on the target system, and that it is the same in both files! 
+Clone the repository and optionally alter the hookdir variable that is defined at line 56 in both /PIC/Source/NtCreateFile.c and /PIC/Source/NtOpenFile.c. This variable is the "special" directory that signals to MemFiles it should intercept the file being created. The hookdir variable is set to "redteam" by default. Ensure this variable is not a real directory on the target system, and that it is the same in both files! 
 
-![image](https://user-images.githubusercontent.com/91164728/220270404-1400c099-8589-469d-9891-1010aba3c29b.png)
+![image](https://user-images.githubusercontent.com/91164728/220797068-8d10f5e4-9deb-4dc0-8907-573d843192bd.png)
 
 Run 'make all' to compile both the necessary BOF's and the PIC functions.  
 
