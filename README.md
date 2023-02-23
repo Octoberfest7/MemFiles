@@ -12,7 +12,7 @@ It accomplishes this by hooking several different NtAPI's within NTDLL.dll and r
 
 A "special", non-existent directory is defined within the MemFiles toolkit; any files that are written to this special directory will be captured by MemFiles and written into memory where they can then be downloaded to the Teamserver.
 
-MemFiles is compatible with most (not all) tools that run within the Beacon process and that can be instructed to write their output to a specific directory.
+MemFiles is compatible with most (not all) tools that run within the Beacon process and that can be instructed to write their output to a specific directory. It does NOT require elevated privileges to work.
 
 This includes:  
 -BOF's  
