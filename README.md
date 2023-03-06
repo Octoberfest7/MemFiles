@@ -4,7 +4,7 @@
 #### I highly encourage you to read all of the documentation up until the "Technical Details, Design Considerations, and Commentary" section!
 
 ## Introduction
-MemFiles is a toolkit for CobaltStrike that enables Operators to write files produced by the Beacon process into memory, rather than writing them to disk on the target system. It has been successfully tested on Windows 7, 10, and 11; corresponding server version should work without issue. MemFiles is restricted to x64 Beacons.
+MemFiles is a toolkit for CobaltStrike that enables Operators to write files produced by the Beacon process into memory, rather than writing them to disk on the target system. It has been successfully tested on Windows 7, 10, and 11; corresponding server versions should work without issue. MemFiles is restricted to x64 Beacons.
 
 It accomplishes this by hooking several different NtAPI's within NTDLL.dll and redirecting calls to those API's to functions that have been injected into the Beacon process memory space.  
 
@@ -12,30 +12,30 @@ It accomplishes this by hooking several different NtAPI's within NTDLL.dll and r
 
 A "special", non-existent directory is defined within the MemFiles toolkit; any files that are written to this special directory will be captured by MemFiles and written into memory where they can then be downloaded to the Teamserver.
 
-MemFiles is compatible with most (not all) tools that run within the Beacon process and that can be instructed to write their output to a specific directory.
+MemFiles is compatible with most (not all) tools that run within the Beacon process and that can be instructed to write their output to a specific directory. It does NOT require elevated privileges to work.
 
 This includes:  
 -BOF's  
 -.NET assemblies ran inline using something like [inline-executeAssembly](https://github.com/anthemtotheego/InlineExecute-Assembly)  
 -PE's ran inline using something like [Inline-Execute-PE](https://github.com/Octoberfest7/Inline-Execute-PE)  
 
-All of these are compatible because they run inside the Beacon process, where the relevant NtFunctions have been hooked.
+All of these are compatible because they run inside the Beacon process, where the relevant NtAPI's have been hooked.
 
 MemFiles does NOT work with things like:  
 -execute-assembly  
 -shell <program>  
 -run <program>  
 
-None of these are compatible because they all spawn other processes whose NtFunctions have NOT been hooked.
+None of these are compatible because they all spawn other processes whose NtAPI's have NOT been hooked.
 
 MemFiles has successfully been tested with tools like Rubeus, SharpHound, Procdump, and Powershell when they are ran within the Beacon process.  
 
 ![](MemFiles_Demo.gif)
 
 ## Setup
-Clone the repository and optionally alter the hookdir variable that is defined at line 64 in both /PIC/Source/NtCreateFile.c and /PIC/Source/NtOpenFile.c. This variable is the "special" directory that signals to MemFiles it should intercept the file being created. The hookdir variable is set to "redteam" by default. Ensure this variable is not a real directory on the target system, and that it is the same in both files! 
+Clone the repository and optionally alter the hookdir variable that is defined at line 56 in both /PIC/Source/NtCreateFile.c and /PIC/Source/NtOpenFile.c. This variable is the "special" directory that signals to MemFiles it should intercept the file being created. The hookdir variable is set to "redteam" by default. Ensure this variable is not a real directory on the target system, and that it is the same in both files! 
 
-![image](https://user-images.githubusercontent.com/91164728/220270404-1400c099-8589-469d-9891-1010aba3c29b.png)
+![image](https://user-images.githubusercontent.com/91164728/220797068-8d10f5e4-9deb-4dc0-8907-573d843192bd.png)
 
 Run 'make all' to compile both the necessary BOF's and the PIC functions.  
 
@@ -161,7 +161,9 @@ Query the status and configuration of MemFiles using memtable. During long opera
 ## Capabilities and Limitations
 As emphasized in the Introduction, MemFiles requires a clean copy of NTDLL in the Beacon process in order to function. This is necessary because it reads the original bytes in the NtFunction and copies certain ones to the trampoline, which is later used to complete normal calls to the NtFunction that MemFiles should not interfere with. This subject is gone into more detail in the "Technical Details, Design Considerations, and Commentary" section.
 
-The filename stored in the MemFiles struct is parsed out of an argument that is passed to the replacement NtCreateFile function.  MemFiles does this is a fairly simplistic fashion, by locating the "special" directory in the file path argument, seeking to the end of it, and then incrementing the pointer by 1 to account for the "\" character that separates the "special" directory and the filename.  For example, in the path 'C:\users\tom\redteam\myfile.txt', MemFiles locates 'redteam', accounts for the backslash character, and selects 'myfile.txt' as the filename.
+MemFiles makes an initial allocation of 1048576 bytes for each file; as data is written to memory, it can and will expand this allocation as needed to hold larger files.
+
+The filename stored in the MemFiles struct is parsed out of an argument that is passed to the replacement NtCreateFile function.  MemFiles does this is a fairly simplistic fashion, by locating the "special" directory in the file path argument, seeking to the end of it, and then incrementing the pointer by 1 to account for the '\\' character that separates the "special" directory and the filename.  For example, in the path 'C:\users\tom\redteam\myfile.txt', MemFiles locates 'redteam', accounts for the backslash character, and selects 'myfile.txt' as the filename.
 
 MemFiles doesn't care about any preceding directories in the file path; 'C:\redteam\myfile.txt' and 'c:\users\tom\appdata\local\redteam\myfile.txt' are equally valid paths as far as MemFiles is concerned. 
 
@@ -362,7 +364,7 @@ The "Invalid Handle" error was a dead giveaway that there was an NtAPI used by S
 
 SharpHound throws some extra curveballs in that it performs many of it's tasks asynchronously. This makes it much more difficult to trace the linear steps that a single file takes through API calls because there are several files going through the process simultaneously.  In addition, I found by stepping through the program after the NtCreateFile call that eventually the thread in which the NtCreateFile call was made terminates; the eventual NtWriteFile calls (and whatever other unknown API calls that are the subject of this search) happen in a different thread, which further confounds the search process.
 
-Having only briefly dealt with .NET I wasn't well versed in parsing call stacks produced by errors, doubly so for those that are made twice as ugly by the use of async. Over the course of the 20 hour problem, in the absence of progress using my earlier strategy, I kept returning to it and slowly but surely made more sense of it. About the third "chunk" from the top as separated by the "--- End of stack trace..." lines, a line can be seen reading "at Sharphound.Writers.JsonDataWriter...". This gave me a relative place to start in the actual SharpHound code, which is open source and available on Github. As the name suggested, the SharpHound function dealt with writing JSON output out to file; I was already aware that my data was writing out to file successfully so this wasn't news. Tracing up the call stack one level, the next relevant line was "at System.IO.Streamwriter.<FlushAsyncInternal>". The System.IO prefix told me this was a .NET inherent, as opposed to a SharpHound specific function. Looking at the very top section of the call stack, the line that jumped out at me was "at System.IO.FileStream.FlushOSBuffer()".  I decided to google FlushOSBuffer and see what I could find. 
+Having only briefly dealt with .NET I wasn't well versed in parsing call stacks produced by errors, doubly so for those that are made twice as ugly by the use of async. Over the course of the 20 hour problem, in the absence of progress using my earlier strategy, I kept returning to it and slowly but surely made more sense of it. About the third "chunk" from the top as separated by the "--- End of stack trace..." lines, a line can be seen reading "at Sharphound.Writers.JsonDataWriter...". This gave me a relative place to start in the actual SharpHound code, which is open source and available on Github. As the name suggested, the SharpHound function dealt with writing JSON output out to file; I was already aware that my data wasn't writing out to file successfully so this wasn't news. Tracing up the call stack one level, the next relevant line was "at System.IO.Streamwriter.<FlushAsyncInternal>". The System.IO prefix told me this was a .NET inherent, as opposed to a SharpHound specific function. Looking at the very top section of the call stack, the line that jumped out at me was "at System.IO.FileStream.FlushOSBuffer()".  I decided to google FlushOSBuffer and see what I could find. 
 
 Doing so led me to Microsoft's .NET documentation for [filestream.cs](https://referencesource.microsoft.com/#mscorlib/system/io/filestream.cs). There I found the definition for FlushOSBuffer:
 
