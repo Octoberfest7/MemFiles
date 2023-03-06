@@ -40,6 +40,15 @@ SEC( text, B ) NTSTATUS Entry( HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock
 	//If we found a match, simply return STATUS_SUCCESS to avoid 'invalid handle' errors
 	if (matchfound)
 	{
+		if (FileInformationClass == 14)
+		{
+			FILE_POSITION_INFORMATION* fileposinfo = (struct _FILE_POSITION_INFORMATION*)(FileInformation);
+			pFileInfo->filepointer[i] = (int)fileposinfo->CurrentByteOffset.QuadPart;
+			IoStatusBlock->Information = 0;
+		}
+
+		//IoStatusBlock->Pointer = 0;
+		IoStatusBlock->Status = STATUS_SUCCESS;
 		return STATUS_SUCCESS;
 	}
 

@@ -110,9 +110,10 @@ SEC( text, B ) NTSTATUS Entry( PHANDLE FileHandle, ACCESS_MASK DesiredAccess, PO
 			pFileInfo->filedata[j] = Instance.Win32.malloc(1048576 * sizeof(char));
 			Instance.Win32.memset(pFileInfo->filedata[j], 0, 1048576 * sizeof(char));
 
-			//Set allocation length and data length
+			//Set initial allocation length, data length, and file pointer position
 			pFileInfo->fileallocationlen[j] = 1048576;
 			pFileInfo->filedatalen[j] = 0;
+			pFileInfo->filepointer[j] = 0;
 
 			//Set fileclosed value to FALSE so we can track that there are expected further writes to this "file"
 			pFileInfo->fileclosed[j] = FALSE;

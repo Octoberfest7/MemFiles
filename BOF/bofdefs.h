@@ -66,6 +66,7 @@ struct FileInfo {
     wchar_t* filename[100];                         // The name of the file as passed in the first NtCreateFile call
     char* filedata[100];                            // The actual data that is written to memory by NtWriteFile
     int filedatalen[100];                           // The length of the data that has been written to memory by NtWriteFile
+    int filepointer[100];                           // The location of the file pointer as manipulated by NtSetInformationFile
     int fileallocationlen[100];                     // The size of the memory allocation for the file where the data is stored
     BOOL fileclosed[100];                           // Boolen representing whether the "handle" has been closed, indicating no further calls to NtWriteFile are expected
     int numFiles;                                   // The number of files/entries currently present in the FileInfo array (where each index == a file).  Increments and Decrements during lifetime of program
