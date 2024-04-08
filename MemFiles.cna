@@ -8,14 +8,13 @@ $issuedcommand = 0;
 $memfiles_file = cwd() . "/memfiles.txt";
 
 #%memfiles is a hash of arrays. The key for each array is the BeaconId. Each array in memfiles follows this format and each value in the arrays is stored as a string:
-#@(PID, User, Date/Time, pFileInfoStruct)
+#@(PID, User, Date/Time)
 #
 #Value description:
 #key beaconid = CobaltStrike internal identifier for each beacon.  Used to create/locate/remove entries in memfiles when pe commands are issues from a beacon console.
 #0.  pid = Beacon process ID.  Stored for ease of reference for Operators. 
 #1.  User = CobaltStrike user alias of the CS client that installed MemFiles in the beacon process.
 #2.  Date/Time = Date and time that MemFiles was installed.
-#3.  pFileInfoStruct = Memory address of critical struct in beacon memory used by MemFiles to track values across BOF's
 
 ############################## On load try to manually populate MemFiles internal data structure from file ##############################
 
@@ -45,10 +44,10 @@ else
     while $text (readln($handle)) 
     {
         #Now split beacon_output by space delimeter and assign values as appropriate
-        ($bid, $pid, $user, $datetime, $structaddr) = split(' ~\*~ ', $text);
+        ($bid, $pid, $user, $datetime) = split(' ~\*~ ', $text);
 
         #Add entry to memtable
-        %memfiles[$bid] = @($pid, $user, $datetime, $structaddr);
+        %memfiles[$bid] = @($pid, $user, $datetime);
     }
     closef($handle);
     println("Successfully loaded " . $memfiles_file . "!")
@@ -61,7 +60,7 @@ sub writelogfile
     $handle = openf(">" . $memfiles_file);
     foreach $var (keys(%memfiles))
     {
-        println($handle, $var . " ~*~ " . %memfiles[$var][0] . " ~*~ " . %memfiles[$var][1] . " ~*~ " . %memfiles[$var][2] . " ~*~ " . %memfiles[$var][3]);
+        println($handle, $var . " ~*~ " . %memfiles[$var][0] . " ~*~ " . %memfiles[$var][1] . " ~*~ " . %memfiles[$var][2]);
     }
     closef($handle);
 }
@@ -94,25 +93,6 @@ on beacon_output
     
     $bid = $1;
 
-    #Look for 'memfiles_struct' in beacon_output, if it appears we need to parse and grab values
-    if("memfiles_struct" isin $2)
-    {
-        #Now split beacon_output by space delimeter and assign values as appropriate
-        ($trash %memfiles[$bid][3]) = split(" ", split("\n", $2)[-1]);
-
-        #If this client was the one that issued the command, announce in beacon console what we have done
-        if($issuedcommand == 1)
-        {
-            blog($1, "\c9[+] MemFiles Initialized!\c9");
-        }
-
-        #Set issuedcommand bool back to FALSE so we no longer print messages
-        $issuedcommand = 0;
-
-        #Re-write local memtable file with updated data
-        writelogfile();
-    }
-
     if("MemFiles cleaned from Beacon process!" isin $2)
     {
         removeAt(%memfiles, $bid);
@@ -127,15 +107,15 @@ on beacon_output
 #Parse all events that hit the Event Log and act on those concerning MemFiles events as well as notifications of new users joining the TS
 on event_action
 {
-    local('$trash $bid $pid $user $datetime $structaddr $x');
+    local('$trash $bid $pid $user $datetime $x');
     #If peload is in the event message, a new memtable entry was created by a client and needs to be added to every other clients table.
     if("MemFiles_createstruct" isin $2)
     {
         #Now split beacon_output by space delimeter and assign values as appropriate
-        ($trash, $bid, $pid, $user, $datetime, $structaddr) = split(' ~\*~ ', $2);
+        ($trash, $bid, $pid, $user, $datetime) = split(' ~\*~ ', $2);
 
         #Add entry to memtable
-        %memfiles[$bid] = @($pid, $user, $datetime, $structaddr);
+        %memfiles[$bid] = @($pid, $user, $datetime);
 
         #Re-write local memtable file with updated data
         writelogfile();
@@ -158,10 +138,10 @@ on event_action
     else if("MemFiles_broadcast" isin $2 && $1 ne mynick())
     {
         #Now split beacon_output by space delimeter and assign values as appropriate
-        ($trash, $bid, $pid, $user, $datetime, $structaddr) = split(' ~\*~ ', $2);
+        ($trash, $bid, $pid, $user, $datetime) = split(' ~\*~ ', $2);
         
         #Add entry to memtable
-        %memfiles[$bid] = @($pid, $user, $datetime, $structaddr);
+        %memfiles[$bid] = @($pid, $user, $datetime);
 
         #Re-write local memtable file with updated data
         writelogfile();
@@ -183,7 +163,7 @@ on event_join
 
         foreach $var (keys(%memfiles))
         {
-            action("MemFiles_broadcast" . " ~*~ " . $var . " ~*~ " . %memfiles[$var][0] . " ~*~ " . %memfiles[$var][1] . " ~*~ " . %memfiles[$var][2] . " ~*~ " . %memfiles[$var][3]);
+            action("MemFiles_broadcast" . " ~*~ " . $var . " ~*~ " . %memfiles[$var][0] . " ~*~ " . %memfiles[$var][1] . " ~*~ " . %memfiles[$var][2]);
         }
     }
 }
@@ -221,14 +201,13 @@ alias memtable
         $head1 = "PID";
         $head2 = "Loaded By";
         $head3 = "Date/Time";
-        $head4 = "pMemAddrStruct";
-        $head5 = "Setting";
-        $head6 = "Value";
-        $head7 = "Description";
+        $head4 = "Setting";
+        $head5 = "Value";
+        $head6 = "Description";
         
         blog($1, "");
         blog($1, "\c7Global Configuration\c7");
-        blog($1, "$[15]head5 $[10]head6 $head7");
+        blog($1, "$[15]head4 $[10]head5 $head6");
         blog($1, "-" x 140);
 
         foreach $val (keys(%memfiles))
@@ -258,8 +237,8 @@ alias memtable
         blog($1, "\c9Green Entries\c9 = Active beacons");
         blog($1, "White Entries = Inactive beacons");
         blog($1, "");
-        blog($1, "$[10]head1 $[15]head2 $[15]head3 $[15]head4");
-        blog($1, "-" x 70);
+        blog($1, "$[10]head1 $[15]head2 $[15]head3");
+        blog($1, "-" x 40);
 
         foreach $bid (keys(%memfiles))
         {
@@ -268,7 +247,6 @@ alias memtable
                 $pid = %memfiles[$bid][0];
                 $user = %memfiles[$bid][1];
                 $datetime = %memfiles[$bid][2];
-                $pMemAddrStruct = %memfiles[$bid][3];
 
                 #Display still active beacons as GREEN
                 if(-isactive $bid && binfo($bid, "last") <= (binfo($bid, "sleep")[0] * 1000 * 3))
@@ -276,11 +254,11 @@ alias memtable
                     #If $bid matches the beacon this is being ran in, highlight the PID
                     if($bid == $1)
                     {
-                        blog($1, "\cB$[10]pid\o \c9$[15]user $[15]datetime $[15]pMemAddrStruct\c9");
+                        blog($1, "\cB$[10]pid\o \c9$[15]user $[15]datetime\c9");
                     }
                     else
                     {
-                        blog($1, "\c9$[10]pid $[15]user $[15]datetime $[15]pMemAddrStruct\c9");
+                        blog($1, "\c9$[10]pid $[15]user $[15]datetime\c9");
                     }
                 }
                 #Display inactive beacons and those that haven't called back within 3x the sleep time as normal/white.
@@ -289,11 +267,11 @@ alias memtable
                     #If $bid matches the beacon this is being ran in, highlight the PID
                     if($bid == $1)
                     {
-                        blog($1, "\cB$[10]pid\o $[15]user $[15]datetime $[15]pMemAddrStruct");
+                        blog($1, "\cB$[10]pid\o $[15]user $[15]datetime");
                     }
                     else
                     {
-                        blog($1, "$[10]pid $[15]user $[15]datetime $[15]pMemAddrStruct");
+                        blog($1, "$[10]pid $[15]user $[15]datetime");
                     }
                 }
             }
@@ -346,8 +324,8 @@ sub meminitfunc
     else
     {        
         #Create array in @memfiles to store PE data.
-        #Values: BeaconID, PID, User, Date/Time, pFileInfoStruct
-        action("MemFiles_createstruct" . " ~*~ " . $bid . " ~*~ " . binfo($bid, "pid") . " ~*~ " . mynick() . " ~*~ " . tstamp(ticks()) . " ~*~ " . "null");
+        #Values: BeaconID, PID, User, Date/Time
+        action("MemFiles_createstruct" . " ~*~ " . $bid . " ~*~ " . binfo($bid, "pid") . " ~*~ " . mynick() . " ~*~ " . tstamp(ticks()));
 
         #Set issuedcommand bool to TRUE so we print messages when we get feeback from BOF;
         $issuedcommand = 1;
@@ -465,8 +443,8 @@ alias memlist
     else
     {        
         $fetchfiles = 0;
+        $force = 0;
         $cleanup = 0;
-        $pFileInfoStruct = %memfiles[$bid][3];
 
         # read in the right BOF file
         $handle = openf(script_resource("BOF/MemFiles. $+ $barch $+ .o"));
@@ -474,7 +452,7 @@ alias memlist
         closef($handle);
 
         # Pack the arguments
-        $args = bof_pack($1, "zii", $pFileInfoStruct, $fetchfiles, $cleanup);
+        $args = bof_pack($1, "iii", $fetchfiles, $force, $cleanup);
 
         # Execute BOF
         beacon_inline_execute($1, $data, "go", $args);
@@ -525,7 +503,6 @@ alias memfetch
         $fetchfiles = 1;
         $force = 0;
         $cleanup = 0;
-        $pFileInfoStruct = %memfiles[$bid][3];
 
         #If force argment is provided by user, update variable
         if($2 eq lc("force"))
@@ -539,7 +516,7 @@ alias memfetch
         closef($handle);
 
         # Pack the arguments
-        $args = bof_pack($1, "ziii", $pFileInfoStruct, $fetchfiles, $force, $cleanup);
+        $args = bof_pack($1, "iii", $fetchfiles, $force, $cleanup);
 
         # Execute BOF
         beacon_inline_execute($1, $data, "go", $args);
@@ -593,7 +570,6 @@ alias memclean
         $fetchfiles = 1;
         $force = 1;
         $cleanup = 1;
-        $pFileInfoStruct = %memfiles[$bid][3];
 
         # read in the right BOF file
         $handle = openf(script_resource("BOF/MemFiles. $+ $barch $+ .o"));
@@ -601,7 +577,7 @@ alias memclean
         closef($handle);
 
         # Pack the arguments
-        $args = bof_pack($1, "ziii", $pFileInfoStruct, $fetchfiles, $force, $cleanup);
+        $args = bof_pack($1, "iii", $fetchfiles, $force, $cleanup);
 
         # Execute BOF
         beacon_inline_execute($1, $data, "go", $args);
@@ -670,13 +646,13 @@ beacon_command_register(
     "custupload",
     "in-memory testing",
     "
-Command: boom
+Command: custupload
 Summary: This command will run a BOF to load an unmanaged PE into Beacon memory.
          Supports x64 C or C++ binaries compiled with mingw or visual studio.  Binaries outside these parameters are untested. 
 
-Usage:   boom </path/to/binary.exe>
+Usage:   custupload </path/to/binary.exe>
          </path/to/binary.exe>        Required. Full path to the windows EXE you wish you load into the Beacon.
 
-         Example: boom /root/windows_binaries/dsquery_win7.exe
+         Example: custupload /root/windows_binaries/dsquery_win7.exe
 "
 );

@@ -276,10 +276,14 @@ int go(IN PCHAR Buffer, IN ULONG Length)
 	pFileInfo->numFiles = 0;
 	pFileInfo->totalFiles = 0;
 
-	//Send struct address back to CS for use later
-	char pFileInfostr[20] = {0};
-	sprintf_s(pFileInfostr, 20, "%p", pFileInfo);
-    BeaconPrintf(CALLBACK_OUTPUT, "memfiles_struct %s", pFileInfostr);
+	//Save struct on the Key/Value store
+	if (!BeaconAddValue(MF_FILE_INFO_KEY, pFileInfo))
+	{
+		BeaconPrintf(CALLBACK_ERROR, "failed to call BeaconAddValue");
+		return 0;
+	}
+
+	BeaconPrintf(CALLBACK_OUTPUT, "memfiles initialized");
 
 	datap parser;
 	BeaconDataParse(&parser, Buffer, Length);

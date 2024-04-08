@@ -9,6 +9,8 @@
 #include <inttypes.h>
 #include <tlhelp32.h>
 
+#define MF_FILE_INFO_KEY "MemFilesKey"
+
 //MSVCRT
 WINBASEAPI void __cdecl MSVCRT$free(void *_Memory);
 WINBASEAPI void *__cdecl MSVCRT$malloc(size_t size);
